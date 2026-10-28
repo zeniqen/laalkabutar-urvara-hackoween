@@ -46,7 +46,7 @@ export function DemoIncidents({ compact = false }: { compact?: boolean }) {
                 id = r.proposalId;
                 return r.state;
               }, { success: "Forecast updated. A replan is waiting for your approval." });
-              if (ok && id) router.push(`/owner/operations?proposal=${id}`);
+              if (ok && id) router.push(⁠ /owner/operations?proposal=${id} ⁠);
             }}
           >
             {weatherDone ? "Forecast already updated" : "Simulate rain"}
@@ -66,8 +66,8 @@ export function DemoIncidents({ compact = false }: { compact?: boolean }) {
                 const r = simulateMachineBreakdown(s, user.id);
                 id = r.proposalId;
                 return r.state;
-              }, { success: `${machine?.name} marked broken. A replan is waiting for your approval.` });
-              if (ok && id) router.push(`/owner/operations?proposal=${id}`);
+              }, { success: ⁠ ${machine?.name} marked broken. A replan is waiting for your approval. ⁠ });
+              if (ok && id) router.push(⁠ /owner/operations?proposal=${id} ⁠);
             }}
           >
             {machineDone ? "Already out of service" : "Break the sprayer"}

@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
+    "test:n8n": "tsx scripts/test-n8n-webhook.ts",
     "seed:firestore": "tsx scripts/seed-firestore.ts",
     "check": "npm run typecheck && npm run lint && npm test"
   },

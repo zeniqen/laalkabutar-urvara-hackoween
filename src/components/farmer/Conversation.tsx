@@ -372,8 +372,7 @@ export function Conversation() {
                     <ul className="mt-1 space-y-1">
                       {m.sources.map((s) => (
                         <li key={s.label} className="flex flex-wrap items-center gap-2 text-sm text-ink">
-                          <span>{s.label}</span>
-                          <Provenance source={s.provenance} at={s.at} now={state.now} />
+                          <span className="font-medium">{s.label}</span>
                         </li>
                       ))}
                     </ul>

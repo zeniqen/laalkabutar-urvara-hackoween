@@ -30,8 +30,28 @@ type TestCase = {
   expectHttp: number[];
   expectStatus: Status[];
   /** Extra checks; return a list of problems (empty = pass). */
-  check?: (res: WebhookResponse, body: any) => string[];
+  check?: (res: WebhookResponse, body: SentEvent) => string[];
 };
+
+/**
+ * The parts of a request body the checks read. Every field is optional because
+ * the invalid-event cases deliberately drop some.
+ */
+type SentEvent = {
+  eventId?: string;
+  farmId?: string;
+  data?: { context?: { tasks?: { taskId?: string }[]; resources?: { resourceId?: string }[] } };
+};
+
+type ProposedAction = {
+  type?: string;
+  taskId?: string;
+  resourceId?: string;
+  newScheduledDate?: string;
+  validationIssues?: unknown[];
+};
+
+type ValidationSummary = { validActions?: number; totalActions?: number };
 
 type WebhookResponse = {
   status?: string;
@@ -78,6 +98,13 @@ function day(offset: number): string {
 
 const nowIst = () => new Date(Date.now() + 5.5 * 3600_000).toISOString().replace("Z", "+05:30");
 
+/** Copy of an object without the given keys, for the cases that drop required fields. */
+function without<T extends object, K extends keyof T>(obj: T, ...keys: K[]): Omit<T, K> {
+  const copy: Partial<T> = { ...obj };
+  for (const k of keys) delete copy[k];
+  return copy as Omit<T, K>;
+}
+
 function farmEvent(id: string, data: unknown, extra: Record<string, unknown> = {}) {
   return {
     eventId: `test-${id}-${Date.now()}`,
@@ -103,10 +130,10 @@ function collect(value: unknown, key: string, out: string[] = []): string[] {
 }
 
 /** The AI may only reference task and resource IDs we supplied. */
-function onlyKnownIds(res: WebhookResponse, body: any): string[] {
+function onlyKnownIds(res: WebhookResponse, body: SentEvent): string[] {
   const ctx = body?.data?.context ?? {};
-  const taskIds = new Set<string>((ctx.tasks ?? []).map((t: any) => t.taskId));
-  const resourceIds = new Set<string>((ctx.resources ?? []).map((r: any) => r.resourceId));
+  const taskIds = new Set((ctx.tasks ?? []).map((t) => t.taskId));
+  const resourceIds = new Set((ctx.resources ?? []).map((r) => r.resourceId));
   if (isRejected(res)) return []; // a rejected plan is already blocked; bad IDs are why
   const actions = recordOf(res)?.proposedActions;
   const problems: string[] = [];
@@ -132,9 +159,9 @@ function sprayingNeedsApproval(res: WebhookResponse): string[] {
 function noSameDayConflicts(res: WebhookResponse): string[] {
   const rec = recordOf(res);
   if (!rec || isRejected(res) || !Array.isArray(rec.proposedActions)) return [];
-  const seen = new Map<string, string>();
+  const seen = new Map<string, string | undefined>();
   const problems: string[] = [];
-  for (const a of rec.proposedActions as any[]) {
+  for (const a of rec.proposedActions as ProposedAction[]) {
     const date = a?.newScheduledDate;
     if (!a?.resourceId || !date || a.type === "CANCEL_TASK") continue;
     const key = `${a.resourceId}@${date}`;
@@ -265,16 +292,17 @@ const CASES: TestCase[] = [
   {
     id: "defaults",
     description: "No timestamp or source — workflow should fill the defaults and still run",
-    body: (() => {
-      const { timestamp: _t, source: _s, ...rest } = farmEvent("defaults", {
+    body: without(
+      farmEvent("defaults", {
         weather: { condition: "light_rain", rainfallMm: 6, from: day(1), to: day(1) },
         context: {
           tasks: [{ taskId: "task-701", type: "irrigation", date: day(1), resourceId: "pump-1" }],
           resources: [{ resourceId: "pump-1", type: "pump" }],
         },
-      });
-      return rest;
-    })(),
+      }),
+      "timestamp",
+      "source",
+    ),
     expectHttp: [200],
     expectStatus: ["proposed", "pending_approval", "rejected"],
     check: onlyKnownIds,
@@ -282,20 +310,14 @@ const CASES: TestCase[] = [
   {
     id: "invalid-no-event-id",
     description: "Missing eventId",
-    body: (() => {
-      const { eventId: _e, ...rest } = farmEvent("x", { weather: { condition: "heavy_rain" } });
-      return rest;
-    })(),
+    body: without(farmEvent("x", { weather: { condition: "heavy_rain" } }), "eventId"),
     expectHttp: [400],
     expectStatus: ["invalid_event"],
   },
   {
     id: "invalid-no-farm-id",
     description: "Missing farmId",
-    body: (() => {
-      const { farmId: _f, ...rest } = farmEvent("no-farm", { weather: { condition: "heavy_rain" } });
-      return rest;
-    })(),
+    body: without(farmEvent("no-farm", { weather: { condition: "heavy_rain" } }), "farmId"),
     expectHttp: [400],
     expectStatus: ["invalid_event"],
   },
@@ -332,7 +354,7 @@ function checkResponse(tc: TestCase, http: number, res: WebhookResponse): CheckR
   if (http !== 200) return { problems, warnings };
   if (!rec) return { problems: [...problems, "no decision record in response"], warnings };
 
-  const sent = tc.body as any;
+  const sent = tc.body as SentEvent;
 
   // What the plan must have to be usable at all.
   for (const k of ["runId", "status", "summary"] as const) if (rec[k] == null) problems.push(`${k} missing`);
@@ -357,7 +379,7 @@ function checkResponse(tc: TestCase, http: number, res: WebhookResponse): CheckR
     warnings.push("rejected plan carries the note \"All actions passed deterministic validation\"");
 
   // A plan with invalid actions must not be accepted as-is.
-  const vr = rec.validationResults as any;
+  const vr = rec.validationResults as ValidationSummary | null;
   if (rec.status === "proposed" && vr && vr.validActions !== vr.totalActions)
     problems.push(`proposed with only ${vr.validActions}/${vr.totalActions} valid actions`);
 
@@ -370,7 +392,7 @@ function checkResponse(tc: TestCase, http: number, res: WebhookResponse): CheckR
   }
 
   problems.push(...noSameDayConflicts(res));
-  if (tc.check) problems.push(...tc.check(res, tc.body));
+  if (tc.check) problems.push(...tc.check(res, tc.body as SentEvent));
   return { problems, warnings };
 }
 
